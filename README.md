@@ -21,7 +21,7 @@ Kurulum
 
     Proje Dosyalarını İndirin: GitHub reposunu klonlayın veya ZIP olarak indirin.
 
-[git clone https://github.com/your-username/uydu-takibi.git](https://github.com/Keremcm/Satellite-Track/)
+git clone https://github.com/Keremcm/Satellite-Track.git
 
 Gerekli Python Paketlerini Yükleyin:
 
@@ -56,7 +56,7 @@ Setup
 
     Download the Project Files: Clone the GitHub repository or download as a ZIP.
 
-[git clone https://github.com/your-username/satellite-tracker.git](https://github.com/Keremcm/Satellite-Track/)
+git clone https://github.com/Keremcm/Satellite-Track.git
 
 Install Required Python Packages:
 
