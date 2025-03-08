@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>Uydu Takibi</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+    /* Zoom düğmeleri için stil */
+    #zoom-controls {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      z-index: 10;
+    }
+    #zoom-controls button {
+      font-size: 18px;
+      margin: 5px;
+      width: 40px;
+      height: 40px;
+      border: none;
+      background-color: #fff;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    /* Uydu bilgi paneli */
+    #satellite-info {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      z-index: 10;
+      padding: 10px;
+      background-color: rgba(0,0,0,0.7);
+      color: #fff;
+      border-radius: 5px;
+      display: none;
+      font-family: sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <!-- Zoom kontrol düğmeleri -->
+  <div id="zoom-controls">
+    <button onclick="zoomIn()">+</button>
+    <button onclick="zoomOut()">-</button>
+  </div>
+  
+  <!-- Uydu bilgi paneli -->
+  <div id="satellite-info"></div>
+  
+  <!-- Three.js ve OrbitControls kütüphaneleri -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script>
+    let scene, camera, renderer, controls, earth, satellite;
+    const earthRadius = 20; // Dünya'nın yarıçapı (simülasyonda)
+    let issData = { lat: null, lon: null };
+
+    init();
+    animate();
+    fetchISSData();
+    setInterval(fetchISSData, 5000); // Her 5 saniyede bir ISS verisini güncelle
+
+    function init() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000);
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      // Aydınlatma
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+      scene.add(ambientLight);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(10, 10, 10);
+      scene.add(directionalLight);
+
+      // Dünya: Gerçekçi dokulu, bump ve specular haritalı
+      const earthGeometry = new THREE.SphereGeometry(earthRadius, 64, 64);
+      const textureLoader = new THREE.TextureLoader();
+      const earthTexture = textureLoader.load('https://threejs.org/examples/textures/land_ocean_ice_cloud_2048.jpg');
+      const bumpMap = textureLoader.load('https://threejs.org/examples/textures/earthbump1k.jpg');
+      const specularMap = textureLoader.load('https://threejs.org/examples/textures/earthspec1k.jpg');
+      const earthMaterial = new THREE.MeshPhongMaterial({
+        map: earthTexture,
+        bumpMap: bumpMap,
+        bumpScale: 0.15,
+        specularMap: specularMap,
+        specular: new THREE.Color('grey')
+      });
+      earth = new THREE.Mesh(earthGeometry, earthMaterial);
+      scene.add(earth);
+
+      // Uydu modelini oluştur (gerçekçi görünüm: ana gövde, sol & sağ solar panel, üst anten)
+      satellite = createSatelliteModel();
+      satellite.name = "ISS"; // Uydu adını belirtiyoruz
+      scene.add(satellite);
+      // Başlangıç konumu (dünya yüzeyi etrafında, ölçek dönüşümü ile)
+      satellite.position.set(earthRadius + 5, 0, 0);
+
+      // Kamera ve OrbitControls
+      camera.position.set(0, 30, 60);
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.1;
+      controls.update();
+
+      window.addEventListener('resize', onWindowResize, false);
+      window.addEventListener('click', onMouseClick, false);
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth/window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // ISS verilerini Flask API üzerinden al, uydu konumunu güncelle
+    async function fetchISSData() {
+      try {
+        const res = await fetch('/api/iss');
+        const data = await res.json();
+        if (data.message === "success") {
+          const lat = parseFloat(data.iss_position.latitude);
+          const lon = parseFloat(data.iss_position.longitude);
+          issData.lat = lat;
+          issData.lon = lon;
+          // Kullanıcının belirttiği gibi uydu mesafesini 1600 km olarak ayarlıyoruz
+          const altitudeKm = 1600;
+          const scaleFactor = earthRadius / 6371; // 1 km = (earthRadius/6371) birim
+          const altitude = altitudeKm * scaleFactor;
+          const r = earthRadius + altitude;
+          const pos = convertLatLonToCartesian(lat, lon, r);
+          satellite.position.set(pos.x, pos.y, pos.z);
+        }
+      } catch (err) {
+        console.error("ISS verisi alınırken hata:", err);
+      }
+    }
+
+    // Enlem, boylam ve yarıçapı kullanarak 3B koordinat hesaplama
+    function convertLatLonToCartesian(lat, lon, r) {
+      const phi = (90 - lat) * (Math.PI/180);
+      const theta = (lon + 180) * (Math.PI/180);
+      const x = r * Math.sin(phi) * Math.cos(theta);
+      const y = r * Math.cos(phi);
+      const z = r * Math.sin(phi) * Math.sin(theta);
+      return { x, y, z };
+    }
+
+    // Gerçekçi uydu modeli: ana gövde, sol & sağ solar panel, üst anten
+    function createSatelliteModel() {
+      const group = new THREE.Group();
+      // Ana gövde
+      const bodyGeometry = new THREE.BoxGeometry(2, 0.8, 0.8);
+      const bodyMaterial = new THREE.MeshPhongMaterial({ color: 0x888888 });
+      const bodyMesh = new THREE.Mesh(bodyGeometry, bodyMaterial);
+      group.add(bodyMesh);
+      // Sol solar panel
+      const panelGeometry = new THREE.BoxGeometry(0.2, 4, 1.2);
+      const panelMaterial = new THREE.MeshPhongMaterial({ color: 0x0000ff });
+      const leftPanel = new THREE.Mesh(panelGeometry, panelMaterial);
+      leftPanel.position.set(-1.3, 0, 0);
+      group.add(leftPanel);
+      // Sağ solar panel
+      const rightPanel = new THREE.Mesh(panelGeometry, panelMaterial);
+      rightPanel.position.set(1.3, 0, 0);
+      group.add(rightPanel);
+      // Üst anten
+      const antennaGeometry = new THREE.CylinderGeometry(0.1, 0.1, 1, 8);
+      const antennaMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+      const antenna = new THREE.Mesh(antennaGeometry, antennaMaterial);
+      antenna.position.set(0, 0.6, 0);
+      group.add(antenna);
+      return group;
+    }
+
+    // + / - düğmeleri ile yakınlaşma/uzaklaşma
+    function zoomIn() {
+      camera.position.z = Math.max(5, camera.position.z - 1);
+      controls.update();
+    }
+
+    function zoomOut() {
+      camera.position.z = Math.min(200, camera.position.z + 1);
+      controls.update();
+    }
+
+    // Raycaster ile tıklama algılama
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    function onMouseClick(event) {
+      mouse.x = ( event.clientX / window.innerWidth ) * 2 - 1;
+      mouse.y = - ( event.clientY / window.innerHeight ) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObject(satellite, true);
+      if (intersects.length > 0) {
+        showSatelliteInfo();
+      } else {
+        hideSatelliteInfo();
+      }
+    }
+
+    // Bilgi panelini güncelle ve göster
+    function showSatelliteInfo() {
+        const infoDiv = document.getElementById("satellite-info");
+        infoDiv.style.display = "block";
+        let content = `<strong>${satellite.name}</strong><br>`;
+        content += `Enlem: ${issData.lat ? issData.lat.toFixed(4) : 'Yükleniyor...'}<br>`;
+        content += `Boylam: ${issData.lon ? issData.lon.toFixed(4) : 'Yükleniyor...'}<br>`;
+      
+        // Reverse geocoding ile ülke bilgisini alıyoruz
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${issData.lat}&lon=${issData.lon}`)
+          .then(response => response.json())
+          .then(data => {
+            let country = data.address && data.address.country ? data.address.country : "Bilinmiyor";
+            content += `Ülke: ${country}<br>`;
+            infoDiv.innerHTML = content;
+          })
+          .catch(err => {
+            content += `Ülke: Bilinmiyor<br>`;
+            infoDiv.innerHTML = content;
+          });
+      }
+      
+
+    function hideSatelliteInfo() {
+      document.getElementById("satellite-info").style.display = "none";
+    }
+  </script>
+</body>
+</html>
